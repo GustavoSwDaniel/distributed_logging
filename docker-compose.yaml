@@ -1,0 +1,96 @@
+version: '3'
+
+services:
+  prometheus:
+    image: prom/prometheus
+    container_name: prometheus
+    ports: 
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yaml:/etc/prometheus/prometheus.yaml
+    networks:
+      - rabbitmq-prometheus
+    restart: unless-stopped
+    command: 
+      - '--config.file=/etc/prometheus/prometheus.yaml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+
+  grafana:
+    image: grafana/grafana
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    networks:
+      - rabbitmq-prometheus
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=grafana
+      - GF_INSTALL_PLUGINS=flant-statusmap-panel,grafana-piechart-panel
+    volumes:
+      - ./grafana/config.ini:/etc/grafana/grafana.ini
+      - ./grafana/datasource.yml:/etc/grafana/provisioning/datasources/default.yml
+      - ./grafana/dashboard.yml:/etc/grafana/provisioning/dashboards/default.yml
+      - ./grafana/dashboards:/var/lib/grafana/dashboards
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:latest
+    container_name: postgres
+    environment:
+      - POSTGRES_USER=admin
+      - POSTGRES_PASSWORD=admin
+      - POSTGRES_DB=logsdb
+    ports:
+      - "5432:5432"
+    networks:
+      - rabbitmq-prometheus
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+
+  rabbitmq:
+    image: rabbitmq
+    container_name: rabbitmqlog
+    build:
+      context: .
+      dockerfile: ./rabbitmq/Dockerfile
+    environment:
+      - RABBITMQ_DEFAULT_USER=admin
+      - RABBITMQ_DEFAULT_PASS=admin
+      - RABBITMQ_ERLANG_COOKIE=rabbitmq-prometheus
+    ports:
+      - "5672:5672" 
+      - "15672:15672"
+      - "15693:15692"
+      - "5552:5552"
+    networks:
+      - rabbitmq-prometheus
+    volumes:
+      - ~/.docker-conf/rabbitmq/data/:/var/lib/rabbitmq/
+      - ~/.docker-conf/rabbitmq/log/:/var/log/rabbitmq
+  
+  simulateservices:
+    image: python:3.8-alpine3.19
+    build: 
+      context: .
+      dockerfile: ./simulated_services/Dockerfile
+    depends_on:
+      - rabbitmq
+    networks:
+      - rabbitmq-prometheus
+    environment:
+      - BROKER_URL=amqp://admin:admin@rabbitmq:5672
+    restart: always
+    # deploy:
+    #   mode: replicated
+    #   replicas: 6
+
+networks:
+  rabbitmq-prometheus:
+    driver: bridge
+
+volumes:
+  prom_data:
+  grafana_data:
+  pg_data:
